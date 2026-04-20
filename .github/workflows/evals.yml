@@ -15,8 +15,9 @@ permissions:
 
 jobs:
   evals:
-    # don't run tests for PRs on forks
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+    # only run in upstream livekit/agents; skip in downstream forks that don't have the required secrets.
+    # also skip for PRs originating from external forks.
+    if: github.repository == 'livekit/agents' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
     strategy:
       fail-fast: false
       matrix:
