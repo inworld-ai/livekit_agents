@@ -169,7 +169,8 @@ jobs:
           retention-days: 1
 
   aggregate-dumps:
-    if: always()
+    # tests is skipped in downstream forks, so aggregating its artifacts would fail there; keep the always() semantics in upstream.
+    if: always() && github.repository == 'livekit/agents'
     needs: tests
     runs-on: ubuntu-latest
 
