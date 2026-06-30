@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "livekit-agents[codecs, openai]>=1.5.8",
-    "msgpack>=1.0",
+    "msgpack>=1.2.1",
     "msgpack-types>=0.7.0",
 ]
 
