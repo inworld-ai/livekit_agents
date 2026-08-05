@@ -33,7 +33,7 @@ classifiers = [
 dependencies = [
     "livekit-agents[codecs]>=1.5.8",
     "numpy>=1.26",
-    "aiohttp>=3.8.0",
+    "aiohttp>=3.14.3",
 ]
 
 [project.urls]
