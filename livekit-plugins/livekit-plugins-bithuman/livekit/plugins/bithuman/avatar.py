@@ -6,7 +6,7 @@ import io
 import os
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
@@ -245,7 +245,7 @@ class AvatarSession(BaseAvatarSession):
             logger.debug("new transaction id: %s", runtime.transaction_id)
             await runtime._initialize_token()
         else:
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "model_path": self._model_path,
             }
             if self._api_secret:
@@ -603,7 +603,7 @@ class AvatarSession(BaseAvatarSession):
 
     @property
     def runtime(self) -> AsyncBithuman:
-        if self._runtime is None:
+        if not utils.is_given(self._runtime) or self._runtime is None:
             raise BitHumanException("Runtime not initialized")
         return self._runtime
 
@@ -625,11 +625,11 @@ class BithumanGenerator(VideoGenerator):
 
     @property
     def video_fps(self) -> int:
-        return self._runtime.settings.FPS  # type: ignore
+        return self._runtime.settings.FPS
 
     @property
     def audio_sample_rate(self) -> int:
-        return self._runtime.settings.INPUT_SAMPLE_RATE  # type: ignore
+        return self._runtime.settings.INPUT_SAMPLE_RATE
 
     @utils.log_exceptions(logger=logger)
     async def push_audio(self, frame: rtc.AudioFrame | AudioSegmentEnd) -> None:
