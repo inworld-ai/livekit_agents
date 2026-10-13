@@ -70,6 +70,7 @@ _TextNormalizationStr = Literal["APPLY_TEXT_NORMALIZATION_UNSPECIFIED", "ON", "O
 TextNormalization = _TextNormalizationStr | bool
 TimestampTransportStrategy = Literal["TIMESTAMP_TRANSPORT_STRATEGY_UNSPECIFIED", "SYNC", "ASYNC"]
 DeliveryMode = Literal["DELIVERY_MODE_UNSPECIFIED", "STABLE", "BALANCED", "CREATIVE"]
+AutoModeStrategy = Literal["CLIENT_SEGMENTED", "SENTENCE_BOUNDARY"]
 
 DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY: TimestampTransportStrategy = "ASYNC"
 
@@ -78,6 +79,11 @@ def _validate_str_param(value: object, name: str, literal_type: Any) -> None:
     valid = get_args(literal_type)
     if not isinstance(value, str) or value not in valid:
         raise ValueError(f"Invalid {name}: {value!r}. Must be one of {sorted(valid)}")
+
+
+def _supports_sentence_boundary(model: str) -> bool:
+    # the SENTENCE_BOUNDARY auto-mode strategy is only served by inworld-tts-2 models
+    return model.startswith("inworld-tts-2")
 
 
 def _resolve_text_normalization(value: Any) -> _TextNormalizationStr:
@@ -103,6 +109,7 @@ class _TTSOptions:
     timestamp_transport_strategy: TimestampTransportStrategy = DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY
     buffer_char_threshold: int = DEFAULT_BUFFER_CHAR_THRESHOLD
     max_buffer_delay_ms: int = DEFAULT_MAX_BUFFER_DELAY_MS
+    auto_mode_strategy: AutoModeStrategy = "CLIENT_SEGMENTED"
 
     @property
     def mime_type(self) -> str:
@@ -412,8 +419,9 @@ class _InworldConnection:
                         pkt["create"]["applyTextNormalization"] = opts.text_normalization
                     if is_given(opts.delivery_mode):
                         pkt["create"]["deliveryMode"] = opts.delivery_mode
-                    # Always enable auto_mode since we always use SentenceTokenizer
                     pkt["create"]["autoMode"] = True
+                    if opts.auto_mode_strategy == "SENTENCE_BOUNDARY":
+                        pkt["create"]["autoModeStrategy"] = opts.auto_mode_strategy
                     await self._ws.send_str(json.dumps(pkt))
 
                 elif isinstance(msg, _SendTextMsg):
@@ -890,7 +898,9 @@ class TTS(tts.TTS):
                 Defaults to "wss://api.inworld.ai/".
             http_session (aiohttp.ClientSession, optional): The HTTP session to use.
             tokenizer (tokenize.SentenceTokenizer, optional): The tokenizer to use for streaming.
-                Defaults to `livekit.agents.tokenize.blingfire.SentenceTokenizer`.
+                Defaults to `livekit.agents.tokenize.blingfire.SentenceTokenizer`. When not set,
+                inworld-tts-2 models stream text as it arrives and the server splits it at
+                sentence boundaries instead.
             retain_format (bool, optional): Whether to retain the format of the text when tokenizing.
                 Defaults to True.
             max_connections (int, optional): Maximum number of concurrent WebSocket connections.
@@ -966,6 +976,7 @@ class TTS(tts.TTS):
         self._pool_lock = asyncio.Lock()
         self._prewarm_task: asyncio.Task[None] | None = None
         self._streams = weakref.WeakSet[SynthesizeStream]()
+        self._custom_tokenizer = is_given(tokenizer)
         self._sentence_tokenizer = (
             tokenizer
             if is_given(tokenizer)
@@ -1266,6 +1277,8 @@ class SynthesizeStream(tts.SynthesizeStream):
         super().__init__(tts=tts, conn_options=conn_options)
         self._tts: TTS = tts
         self._opts = replace(tts._opts)
+        if not tts._custom_tokenizer and _supports_sentence_boundary(self._opts.model):
+            self._opts.auto_mode_strategy = "SENTENCE_BOUNDARY"
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
         request_id = utils.shortuuid()
@@ -1286,6 +1299,12 @@ class SynthesizeStream(tts.SynthesizeStream):
             timeout=self._conn_options.timeout,
         )
 
+        def _send_text(text: str) -> None:
+            # Chunk to stay within Inworld's 1000 char limit
+            for i in range(0, len(text), 1000):
+                connection.send_text(context_id, text[i : i + 1000])
+                self._mark_started()
+
         async def _input_task() -> None:
             async for data in self._input_ch:
                 if isinstance(data, self._FlushSentinel):
@@ -1296,18 +1315,26 @@ class SynthesizeStream(tts.SynthesizeStream):
 
         async def _send_task() -> None:
             async for ev in sent_tokenizer_stream:
-                text = ev.token
-                # Chunk to stay within Inworld's 1000 char limit
-                for i in range(0, len(text), 1000):
-                    connection.send_text(context_id, text[i : i + 1000])
-                    self._mark_started()
+                _send_text(ev.token)
             connection.flush_context(context_id)
             connection.close_context(context_id)
 
-        tasks = [
-            asyncio.create_task(_input_task()),
-            asyncio.create_task(_send_task()),
-        ]
+        async def _forward_task() -> None:
+            # the server buffers partial sentences until it finds a boundary
+            async for data in self._input_ch:
+                if isinstance(data, self._FlushSentinel):
+                    connection.flush_context(context_id)
+                elif data:
+                    _send_text(data)
+            connection.close_context(context_id)
+
+        if self._opts.auto_mode_strategy == "SENTENCE_BOUNDARY":
+            tasks = [asyncio.create_task(_forward_task())]
+        else:
+            tasks = [
+                asyncio.create_task(_input_task()),
+                asyncio.create_task(_send_task()),
+            ]
 
         try:
             await asyncio.wait_for(waiter, timeout=self._conn_options.timeout + 60)
