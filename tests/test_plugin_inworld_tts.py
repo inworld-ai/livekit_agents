@@ -211,10 +211,16 @@ async def test_ws_create_packet_auto_mode_strategy():
     pkt = await _capture_first_ws_create_packet(opts)
     assert pkt["create"]["autoMode"] is True
     assert "autoModeStrategy" not in pkt["create"]
+    assert pkt["create"]["bufferCharThreshold"] == 250
 
     opts.auto_mode_strategy = "SENTENCE_BOUNDARY"
     pkt = await _capture_first_ws_create_packet(opts)
     assert pkt["create"]["autoModeStrategy"] == "SENTENCE_BOUNDARY"
+    assert "bufferCharThreshold" not in pkt["create"]
+
+    opts.buffer_char_threshold = 400
+    pkt = await _capture_first_ws_create_packet(opts)
+    assert pkt["create"]["bufferCharThreshold"] == 400
 
 
 @pytest.mark.parametrize(

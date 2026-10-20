@@ -59,7 +59,7 @@ DEFAULT_WS_URL = "wss://api.inworld.ai/"
 DEFAULT_VOICE = "Ashley"
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_SPEAKING_RATE = 1.0
-DEFAULT_BUFFER_CHAR_THRESHOLD = 120
+DEFAULT_BUFFER_CHAR_THRESHOLD = 250
 DEFAULT_MAX_BUFFER_DELAY_MS = 3000
 NUM_CHANNELS = 1
 
@@ -107,7 +107,7 @@ class _TTSOptions:
     text_normalization: NotGivenOr[TextNormalization] = NOT_GIVEN
     delivery_mode: NotGivenOr[DeliveryMode] = NOT_GIVEN
     timestamp_transport_strategy: TimestampTransportStrategy = DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY
-    buffer_char_threshold: int = DEFAULT_BUFFER_CHAR_THRESHOLD
+    buffer_char_threshold: NotGivenOr[int] = NOT_GIVEN
     max_buffer_delay_ms: int = DEFAULT_MAX_BUFFER_DELAY_MS
     auto_mode_strategy: AutoModeStrategy = "CLIENT_SEGMENTED"
 
@@ -405,7 +405,6 @@ class _InworldConnection:
                                 "speakingRate": opts.speaking_rate,
                             },
                             "temperature": opts.temperature,
-                            "bufferCharThreshold": opts.buffer_char_threshold,
                             "maxBufferDelayMs": opts.max_buffer_delay_ms,
                             "timestampTransportStrategy": opts.timestamp_transport_strategy,
                         },
@@ -422,6 +421,12 @@ class _InworldConnection:
                     pkt["create"]["autoMode"] = True
                     if opts.auto_mode_strategy == "SENTENCE_BOUNDARY":
                         pkt["create"]["autoModeStrategy"] = opts.auto_mode_strategy
+                    # with SENTENCE_BOUNDARY the threshold also cuts long sentences, so only a
+                    # set value is sent and the server default applies otherwise
+                    if is_given(opts.buffer_char_threshold):
+                        pkt["create"]["bufferCharThreshold"] = opts.buffer_char_threshold
+                    elif opts.auto_mode_strategy != "SENTENCE_BOUNDARY":
+                        pkt["create"]["bufferCharThreshold"] = DEFAULT_BUFFER_CHAR_THRESHOLD
                     await self._ws.send_str(json.dumps(pkt))
 
                 elif isinstance(msg, _SendTextMsg):
@@ -889,7 +894,8 @@ class TTS(tts.TTS):
                 message as audio data. "ASYNC" allows timestamps to return in trailing
                 messages after the audio data. Defaults to "ASYNC".
             buffer_char_threshold (int, optional): For streaming, the minimum number of characters
-                in the buffer that automatically triggers audio generation. Defaults to 1000.
+                in the buffer that automatically triggers audio generation. Defaults to 250, or to
+                the server default when the server splits sentences.
             max_buffer_delay_ms (int, optional): For streaming, the maximum time in ms to buffer
                 before starting generation. Defaults to 3000.
             base_url (str, optional): The base URL for the Inworld TTS API.
@@ -962,9 +968,7 @@ class TTS(tts.TTS):
             timestamp_transport_strategy=timestamp_transport_strategy
             if is_given(timestamp_transport_strategy)
             else DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY,
-            buffer_char_threshold=buffer_char_threshold
-            if is_given(buffer_char_threshold)
-            else DEFAULT_BUFFER_CHAR_THRESHOLD,
+            buffer_char_threshold=buffer_char_threshold,
             max_buffer_delay_ms=max_buffer_delay_ms
             if is_given(max_buffer_delay_ms)
             else DEFAULT_MAX_BUFFER_DELAY_MS,
