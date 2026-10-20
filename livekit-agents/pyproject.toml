@@ -36,7 +36,7 @@ dependencies = [
     "pyjwt>=2.0",
     "types-protobuf>=4",
     "psutil>=7.0",
-    "aiohttp~=3.10",
+    "aiohttp~=3.14",
     "typing-extensions>=4.12",
     "docstring_parser>=0.16",
     "eval-type-backport",
