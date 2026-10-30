@@ -30,9 +30,21 @@ pytestmark = pytest.mark.unit
 
 ARGON = "gemini-4-argon"
 
+_created: list[LLM] = []
+
 
 def _llm(model: str = ARGON, **kwargs: Any) -> LLM:
-    return LLM(model=model, api_key="test-key", **kwargs)
+    llm = LLM(model=model, api_key="test-key", **kwargs)
+    _created.append(llm)
+    return llm
+
+
+@pytest.fixture(autouse=True)
+async def _close_llms() -> AsyncIterator[None]:
+    """Close the LLMs a test built, so their genai http clients are not left to finalizers."""
+    yield
+    while _created:
+        await _created.pop().aclose()
 
 
 def _response(
